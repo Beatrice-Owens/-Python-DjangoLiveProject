@@ -24,30 +24,159 @@ Creating a model that allows users to enter their speedrunning records posed cer
 
 Here are my models:
 ```
+# game name model
+class GameName(models.Model):
+    game_name = models.CharField(max_length=60, default="")
 
+    objects = models.Manager()
+
+    def __str__(self):
+        return self.game_name
+
+PLATFORM_CHOICES = (...)
+
+# creating a speedrun class object
+class Record(models.Model):
+    player = models.CharField(max_length=60, default="")
+    game = models.ForeignKey(GameName, related_name='records', on_delete=models.CASCADE)
+    time = models.CharField(max_length=30, default="HH:MM:SS")
+    platform = models.CharField(max_length=60, choices=PLATFORM_CHOICES, default="")
+    date = models.DateField(default=date.today)
+
+    objects = models.Manager()
+
+    def __str__(self):
+        return [self.player]
 ```
 
 
-To create a new record users needed to click on the "Add Record" link in the navbar. The rendered page contained a list of form inputs including a dropdown menu containing games already entered in the database. If the user's game wasn't listed, there was a button that linked to another page with a one-input form where they could add their game and be redirected back to the now updated "Add Record" form. This meant users would store their entries with the correct game names. 
+To create a new record users needed to click on the "Add Record" link in the navbar. The rendered page contained a list of form inputs including a dropdown menu containing games already entered in the database. If the user's game wasn't listed, there was a button that linked to another page with a one-input form where they could add their game and be redirected back to the now updated "Add Record" form. This meant users would store their entries with the correct game names. This was accomplished using the following functions:
+```
+# create speedrun record form using model form in django
+def add_record(request):
+    form = SpeedrunForm(data=request.POST or None)
+    if form.is_valid():
+        form.save()
+        return redirect('speed_run_home')
+    else:
+        print(form.errors)
+        form = SpeedrunForm()
+        context = {'form': form}
+    return render(request, 'speed_run_create.html', context)
+
+
+# create game form using model form in django
+def add_game(request):
+    form = GameForm(data=request.POST or None)
+    if form.is_valid():
+        form.save()
+        return redirect('speed_run_create')
+    else:
+        print(form.errors)
+        form = GameForm()
+        context = {'form': form}
+    return render(request, 'speed_run_create_game.html', context)
+```
 
 ## <a name="story3"></a>Story #3: Database Item Display
+I wanted the database items displayed to be contingent upon the game the user was interested in, so I made a page that just listed all games currently in the database and select one to see all records associated with it. This was the function I used: 
+```
+# displays a list of all games entered as GameName Objects
+def all_games(request):
+    games = GameName.objects.all()
+    return render(request, 'speed_run_all_games.html', {'games': games})
+```
 
+This brought up a page with a list of all speedruns in the database for that particular game. To do this I had to call all entries from the Record object associated with the selected entry from the GameName object through the "game" foreign key. The following is the function that I finally landed on: 
+```
+# passes Record information if player has a record for the selected game
+def game_record(request, pk):
+    gamename = get_object_or_404(GameName, pk=pk)
+    records = Record.objects.filter(game=gamename).order_by("time")
+    content = {'gamename': gamename, 'records': records}
+    return render(request, 'speed_run_game_records.html', content)
+```
 
-
-## <a name="story4"></a>Story #4: BDetails Page
-
-
+## <a name="story4"></a>Story #4: Details Page
+The following function displayed a dedicated details page for any entry clicked on in the game record list on the previous page. 
+```
+# displays all details relevant to a selected player
+def speed_run_details(request, pk):
+    details = get_object_or_404(Record, pk=pk)
+    content = {'details': details}
+    return render(request, 'speed_run_details.html', content)
+```
 
 ## <a name="story5"></a>Story #5: Item Edit and Delete
+Edit and Delete buttons were added to the details template page, each leading to their own page. This function displays the information for the selected record in a form that allows the user to make changes and overwrite the existing entry. 
+```
+# allows the user to edit an entry
+def speed_run_edit(request, pk):
+    item = get_object_or_404(Record, pk=pk)
+    form = SpeedrunForm(data=request.POST or None, instance=item)
+    if request.method == 'POST':
+        if form.is_valid():
+            form2 = form.save(commit=False)
+            form2.save()
+            return redirect('speed_run_all_games')
+        else:
+            print(form.errors)
+    else:
+        return render(request, 'speed_run_edit.html', {'form': form, 'item': item})
+```
 
-
+This function allows users to remove a speedrun record from the database. The Delete button on the record details page links to a separate template that displays a final confirmation warning asking if they are sure they want to permanently delete the entry. 
+```
+# allows users to delete a record
+def speed_run_delete(request, pk):
+    item = get_object_or_404(Record, pk=pk)
+    if request.method == 'POST':
+        item.delete()
+        return redirect('speed_run_all_games')
+    context = {'item': item}
+    return render(request, 'speed_run_delete.html', context)
+```
 
 ## <a name="story6"></a>Story #6/7: API and JSON Parse
+The web application also utilized an API to retrieve information about video games. Via the API template page users could enter a term in the search bar and details about games would be displayed in card format including pictures, titles, ratings, and dates of release. The following function took the input, got a JSON response, and parsed that response, returning only the desired information for each related title. 
+```
+def speed_run_api(request):
 
+    search_list = []
+
+    if request.method == 'POST':
+
+        url = "https://rawg-video-games-database.p.rapidapi.com/games?key=5f37df7ee53e491f847a43dfa97cb3a2"
+
+        headers = {
+            'x-rapidapi-host': "rawg-video-games-database.p.rapidapi.com",
+            'x-rapidapi-key': "9afece8438msh5f25fff510a60bbp1954d2jsn7f98f53b6d37"
+        }
+
+        params = {"search": request.POST['searchItem']}
+
+        response = requests.request("GET", url, headers=headers, params=params)
+
+        game_data = json.loads(response.text)
+
+        for game in game_data['results']:
+            bg_img = game['background_image']
+            title = game['name']
+            release = game['released']
+            rating = game['rating']
+            game_array = (bg_img, title, release, rating)
+            search_list.append(game_array)
+
+    content = {
+        'search_list': search_list
+    }
+
+    return render(request, 'speed_run_api.html', content)
+```
 
 
 ## <a name="conclusion"></a>Conclusion
 1.	Through this project I became familiar with Python, Django, Object Oriented Programming, and database manipulation.
 2.	I gained experience in collaborative team-based work and with Agile/Scrum methodologies, DevOps, and Azure DevOps services.
 3.	As the Live Project relied on version control, I practiced making pull requests, merging, committing and pushing changes, and creating branches. 
-4.	I encountered numerous challenges on this project and learned how to process them, not panic, and do efficient constructive research.
+4.	I encountered numerous challenges on this project and learned how to process them, not panic, and conduct efficient constructive research.
